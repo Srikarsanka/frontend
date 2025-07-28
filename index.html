@@ -49,11 +49,97 @@
       <script>
             const socket = io('https://webrtc-backend-siqi.onrender.com');
 
-            // --- Chat ---
             const messages = document.getElementById('messages');
+            const localVideo = document.getElementById('localVideo');
+            const remoteVideo = document.getElementById('remoteVideo');
+
+            let localStream;
+            let peerConnection;
+            let isCaller = false;
+
+            const config = {
+                  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            };
+
+            async function startLocalStream() {
+                  try {
+                        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                        localVideo.srcObject = localStream;
+                        console.log('🎥 Local stream started');
+                        socket.emit('ready'); // Notify others that we're ready
+                  } catch (error) {
+                        console.error('❌ Error accessing media devices.', error);
+                  }
+            }
+
+            function createPeerConnection() {
+                  peerConnection = new RTCPeerConnection(config);
+
+                  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+                  peerConnection.ontrack = event => {
+                        console.log('📶 Remote track received');
+                        remoteVideo.srcObject = event.streams[0];
+                  };
+
+                  peerConnection.onicecandidate = event => {
+                        if (event.candidate) {
+                              console.log('📤 Sending ICE candidate');
+                              socket.emit('ice-candidate', event.candidate);
+                        }
+                  };
+
+                  peerConnection.onconnectionstatechange = () => {
+                        console.log('🔄 Connection state:', peerConnection.connectionState);
+                  };
+            }
+
+            // --- Signaling Handlers ---
+
+            socket.on('ready', () => {
+                  console.log('🟢 Other user ready');
+                  if (!peerConnection) {
+                        createPeerConnection();
+                        isCaller = true;
+                        call();
+                  }
+            });
+
+            socket.on('offer', async (offer) => {
+                  console.log('📩 Offer received');
+                  if (!peerConnection) createPeerConnection();
+                  await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                  const answer = await peerConnection.createAnswer();
+                  await peerConnection.setLocalDescription(answer);
+                  socket.emit('answer', answer);
+                  console.log('📤 Sent answer');
+            });
+
+            socket.on('answer', async (answer) => {
+                  console.log('✅ Answer received');
+                  await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            });
+
+            socket.on('ice-candidate', async (candidate) => {
+                  try {
+                        console.log('❄️ ICE candidate received');
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                  } catch (e) {
+                        console.error('⚠️ Error adding ICE candidate', e);
+                  }
+            });
+
+            async function call() {
+                  if (!peerConnection) createPeerConnection();
+                  const offer = await peerConnection.createOffer();
+                  await peerConnection.setLocalDescription(offer);
+                  console.log('📤 Sending offer');
+                  socket.emit('offer', offer);
+            }
+
+            // --- Chat logic ---
 
             socket.on('chat message', function (data) {
-                  console.log('📨 Chat message received:', data);
                   const li = document.createElement('li');
                   li.textContent = `${data.username}: ${data.message}`;
                   messages.appendChild(li);
@@ -74,118 +160,10 @@
                   }
             }
 
-            // --- WebRTC ---
-            const localVideo = document.getElementById('localVideo');
-            const remoteVideo = document.getElementById('remoteVideo');
-
-            let localStream;
-            let peerConnection;
-
-            const config = {
-                  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-            };
-
-            async function startLocalStream() {
-                  try {
-                        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                        localVideo.srcObject = localStream;
-                        console.log('🎥 Local stream started');
-                  } catch (error) {
-                        console.error('❌ Error accessing media devices:', error);
-                  }
-            }
-
+            // Start local stream on load
             startLocalStream();
-
-            function createPeerConnection() {
-                  peerConnection = new RTCPeerConnection(config);
-                  console.log('🛠️ PeerConnection created');
-
-                  localStream.getTracks().forEach(track => {
-                        peerConnection.addTrack(track, localStream);
-                        console.log(`📡 Track added: ${track.kind}`);
-                  });
-
-                  peerConnection.ontrack = event => {
-                        console.log('📶 Remote track received');
-                        remoteVideo.srcObject = event.streams[0];
-                  };
-
-                  peerConnection.onicecandidate = event => {
-                        if (event.candidate) {
-                              console.log('📤 Sending ICE candidate');
-                              socket.emit('ice-candidate', event.candidate);
-                        }
-                  };
-
-                  peerConnection.onconnectionstatechange = () => {
-                        console.log('🔄 Connection state:', peerConnection.connectionState);
-                  };
-            }
-
-            socket.on('offer', async (offer) => {
-                  console.log('📩 Offer received');
-                  if (!peerConnection) createPeerConnection();
-
-                  try {
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                        console.log('✅ Remote description set with offer');
-
-                        const answer = await peerConnection.createAnswer();
-                        await peerConnection.setLocalDescription(answer);
-
-                        socket.emit('answer', answer);
-                        console.log('📤 Sent answer');
-                  } catch (e) {
-                        console.error('❌ Error handling offer:', e);
-                  }
-            });
-
-            socket.on('answer', async (answer) => {
-                  console.log('📨 Answer received');
-                  try {
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                        console.log('✅ Remote description set with answer');
-                  } catch (e) {
-                        console.error('❌ Error setting answer as remote description:', e);
-                  }
-            });
-
-            socket.on('ice-candidate', async (candidate) => {
-                  console.log('📨 ICE candidate received');
-                  try {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                        console.log('✅ ICE candidate added');
-                  } catch (e) {
-                        console.error('❌ Error adding ICE candidate:', e);
-                  }
-            });
-
-            async function call() {
-                  if (!peerConnection) createPeerConnection();
-
-                  try {
-                        const offer = await peerConnection.createOffer();
-                        await peerConnection.setLocalDescription(offer);
-
-                        console.log('📤 Sending offer');
-                        socket.emit('offer', offer);
-                  } catch (e) {
-                        console.error('❌ Error creating or sending offer:', e);
-                  }
-            }
-
-            // Ensure only one initiates call
-            let hasCalled = false;
-            socket.on('user-connected', () => {
-                  if (!hasCalled) {
-                        hasCalled = true;
-                        call();
-                  }
-            });
-
-            socket.emit('user-connected');
       </script>
+
 </body>
 
 </html>
