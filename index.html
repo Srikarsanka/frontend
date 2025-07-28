@@ -49,8 +49,6 @@
       <script>
             const socket = io('https://webrtc-backend-siqi.onrender.com');
 
-
-
             // --- Chat functionality ---
             const messages = document.getElementById('messages');
 
@@ -156,10 +154,17 @@
                   socket.emit('offer', offer);
             }
 
-            // Wait for local stream then start call
-            setTimeout(() => {
-                  call();
-            }, 2000);
+            // ✅ Updated logic to prevent race condition
+            let hasCalled = false;
+
+            socket.on('user-connected', () => {
+                  if (!hasCalled) {
+                        hasCalled = true;
+                        call();
+                  }
+            });
+
+            socket.emit('user-connected');
       </script>
 </body>
 
